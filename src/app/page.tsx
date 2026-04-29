@@ -1,5 +1,7 @@
 'use client';
-
+import Link from 'next/link';
+import { MessageSquare } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { useState, useEffect } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -52,17 +54,28 @@ export default function Home() {
     <main className="min-h-screen p-4 md:p-8 bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
       <div className="max-w-[1800px] mx-auto">
         {/* Header */}
-        <div className="mb-8 text-center">
-          <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-3">
-            LiteDoc Visualization
-          </h1>
-          <p className="text-slate-600 dark:text-slate-400 text-lg">
-            Interactive MoE Expert Pruning & Token Routing
-          </p>
-          <p className="text-sm text-slate-500 dark:text-slate-500 mt-2">
-            3D Architecture Visualization with Real-time Inference Flow
-          </p>
+      <div className="mb-8 text-center">
+        <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-3">
+          LiteDoc Visualization
+        </h1>
+        <p className="text-slate-600 dark:text-slate-400 text-lg">
+          Interactive MoE Expert Pruning & Token Routing
+        </p>
+        <p className="text-sm text-slate-500 dark:text-slate-500 mt-2">
+          3D Architecture Visualization with Real-time Inference Flow
+        </p>
+        
+        {/* Add this button */}
+        <div className="mt-6">
+          <Link href="/chat">
+            <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 py-3 text-lg">
+              <MessageSquare className="w-5 h-5 mr-2" />
+              Chat with LiteDoc
+            </Button>
+          </Link>
         </div>
+      </div>
+        
 
         <Tabs defaultValue="baseline" className="w-full">
           <TabsList className="grid w-full grid-cols-3 mb-6 bg-white dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700">
