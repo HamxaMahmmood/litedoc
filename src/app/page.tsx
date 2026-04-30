@@ -1,207 +1,446 @@
 'use client';
 import Link from 'next/link';
-import { MessageSquare } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { useState, useEffect } from 'react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { MessageSquare, Zap, Cpu, BarChart3, GitBranch, ChevronRight, Activity } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
 import MoEArchitecture3D from '@/components/visualizations/MoEArchitecture3D';
 import ModelStats from '@/components/visualizations/ModelStats';
 import ExpertRetentionChart from '@/components/visualizations/ExpertRetentionChart';
 import { ModelConfig } from '@/types/model';
 import { Loader2 } from 'lucide-react';
 
+// ─── Animated grid background ────────────────────────────────────────────────
+function GridBackground() {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none',
+    }}>
+      {/* Deep space gradient */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'radial-gradient(ellipse 80% 60% at 20% 10%, rgba(15,30,80,0.6) 0%, transparent 60%), radial-gradient(ellipse 60% 50% at 80% 80%, rgba(50,10,80,0.4) 0%, transparent 60%), #030712',
+      }} />
+      {/* Grid lines */}
+      <svg width="100%" height="100%" style={{ position: 'absolute', inset: 0, opacity: 0.06 }}>
+        <defs>
+          <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
+            <path d="M 60 0 L 0 0 0 60" fill="none" stroke="#38bdf8" strokeWidth="0.5" />
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid)" />
+      </svg>
+      {/* Scanline overlay */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px)',
+      }} />
+    </div>
+  );
+}
+
+// ─── Glowing stat card ────────────────────────────────────────────────────────
+function StatCard({ icon: Icon, value, label, accent }: { icon: any; value: string; label: string; accent: string }) {
+  return (
+    <div style={{
+      background: `linear-gradient(135deg, rgba(5,10,25,0.9) 0%, rgba(10,20,40,0.8) 100%)`,
+      border: `1px solid ${accent}22`,
+      borderRadius: 12,
+      padding: '18px 20px',
+      position: 'relative',
+      overflow: 'hidden',
+      flex: 1,
+      minWidth: 120,
+    }}>
+      <div style={{
+        position: 'absolute', top: 0, right: 0, width: 80, height: 80,
+        background: `radial-gradient(circle, ${accent}18 0%, transparent 70%)`,
+        borderRadius: '0 12px 0 80px',
+      }} />
+      <div style={{ color: accent, marginBottom: 8, opacity: 0.9 }}>
+        <Icon size={18} />
+      </div>
+      <div style={{ color: '#f1f5f9', fontSize: 22, fontWeight: 700, fontFamily: 'monospace', letterSpacing: -1 }}>
+        {value}
+      </div>
+      <div style={{ color: '#ffffff', fontSize: 11, fontFamily: 'monospace', letterSpacing: 1, textTransform: 'uppercase', marginTop: 2 }}>
+        {label}
+      </div>
+    </div>
+  );
+}
+
+// ─── Model tab config ─────────────────────────────────────────────────────────
+const MODEL_TABS = [
+  {
+    id: 'baseline',
+    label: 'BASELINE',
+    sublabel: '0% pruned',
+    accent: '#38bdf8',
+    accentDim: 'rgba(56,189,248,0.12)',
+    accentBorder: 'rgba(56,189,248,0.3)',
+    description: 'Full DeepSeek-VL2 Tiny · 64 experts/layer · 3.37B params',
+    dataKey: 'baseline' as const,
+    stats: [
+      { icon: Cpu, value: '3.37B', label: 'Parameters' },
+      { icon: GitBranch, value: '64', label: 'Experts/Layer' },
+      { icon: Zap, value: '1.0×', label: 'Compression' },
+      { icon: Activity, value: '12.3GB', label: 'VRAM' },
+    ],
+  },
+  {
+    id: 'pruned40',
+    label: '40% PRUNED',
+    sublabel: 'LiteDoc-60',
+    accent: '#a78bfa',
+    accentDim: 'rgba(167,139,250,0.10)',
+    accentBorder: 'rgba(167,139,250,0.28)',
+    description: 'CKA pruned · ~38 experts/layer · 2.4B params · 1.4× compression',
+    dataKey: 'pruned40' as const,
+    stats: [
+      { icon: Cpu, value: '2.4B', label: 'Parameters' },
+      { icon: GitBranch, value: '~38', label: 'Experts/Layer' },
+      { icon: Zap, value: '1.4×', label: 'Compression' },
+      { icon: Activity, value: '9.8GB', label: 'VRAM' },
+    ],
+  },
+  {
+    id: 'pruned80',
+    label: '80% PRUNED',
+    sublabel: 'LiteDoc-20',
+    accent: '#f472b6',
+    accentDim: 'rgba(244,114,182,0.10)',
+    accentBorder: 'rgba(244,114,182,0.28)',
+    description: 'Aggressive CKA pruning · ~13 experts/layer · 1.4B params · 2.4× compression',
+    dataKey: 'pruned80' as const,
+    stats: [
+      { icon: Cpu, value: '1.4B', label: 'Parameters' },
+      { icon: GitBranch, value: '~13', label: 'Experts/Layer' },
+      { icon: Zap, value: '2.4×', label: 'Compression' },
+      { icon: Activity, value: '7.4GB', label: 'VRAM' },
+    ],
+  },
+];
+
+// ─── Section heading ──────────────────────────────────────────────────────────
+function SectionHeading({ icon: Icon, label, accent }: { icon: any; label: string; accent: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+      <div style={{
+        width: 32, height: 32, borderRadius: 8,
+        background: `${accent}18`, border: `1px solid ${accent}30`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', color: accent,
+      }}>
+        <Icon size={16} />
+      </div>
+      <span style={{ color: '#ffffff', fontSize: 12, fontFamily: 'monospace', letterSpacing: 2, textTransform: 'uppercase' }}>
+        {label}
+      </span>
+      <div style={{ flex: 1, height: 1, background: `linear-gradient(to right, ${accent}20, transparent)` }} />
+    </div>
+  );
+}
+
+// ─── Performance badge ────────────────────────────────────────────────────────
+function PerfBadge({ value, label, accent }: { value: string; label: string; accent: string }) {
+  return (
+    <div style={{
+      background: `${accent}10`, border: `1px solid ${accent}25`,
+      borderRadius: 8, padding: '8px 14px', display: 'inline-flex',
+      flexDirection: 'column', alignItems: 'center', gap: 2,
+    }}>
+      <span style={{ color: accent, fontSize: 15, fontWeight: 700, fontFamily: 'monospace' }}>{value}</span>
+      <span style={{ color: '#ffffff', fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1 }}>{label}</span>
+    </div>
+  );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
 export default function Home() {
   const [baselineData, setBaselineData] = useState<ModelConfig | null>(null);
   const [pruned40Data, setPruned40Data] = useState<ModelConfig | null>(null);
   const [pruned80Data, setPruned80Data] = useState<ModelConfig | null>(null);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'baseline' | 'pruned40' | 'pruned80'>('baseline');
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     async function loadData() {
       try {
         const [baseline, pruned40, pruned80] = await Promise.all([
-          fetch('/data/baseline.json').then(res => res.json()),
-          fetch('/data/pruned40.json').then(res => res.json()),
-          fetch('/data/pruned80.json').then(res => res.json()),
+          fetch('/data/baseline.json').then(r => r.json()),
+          fetch('/data/pruned40.json').then(r => r.json()),
+          fetch('/data/pruned80.json').then(r => r.json()),
         ]);
-
         setBaselineData(baseline);
         setPruned40Data(pruned40);
         setPruned80Data(pruned80);
-      } catch (error) {
-        console.error('Error loading data:', error);
+      } catch (e) {
+        console.error(e);
       } finally {
         setLoading(false);
       }
     }
-
     loadData();
   }, []);
 
+  const dataMap = { baseline: baselineData, pruned40: pruned40Data, pruned80: pruned80Data };
+  const activeTabConfig = MODEL_TABS.find(t => t.id === activeTab)!;
+  const activeData = dataMap[activeTab];
+
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
-        <div className="text-center">
-          <Loader2 className="w-12 h-12 animate-spin text-blue-600 mx-auto mb-4" />
-          <p className="text-slate-600 dark:text-slate-400">Loading visualizations...</p>
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: '#030712',
+      }}>
+        <GridBackground />
+        <div style={{ textAlign: 'center', position: 'relative', zIndex: 1 }}>
+          <div style={{
+            width: 64, height: 64, margin: '0 auto 20px',
+            border: '2px solid rgba(56,189,248,0.3)',
+            borderTopColor: '#38bdf8', borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+          }} />
+          <p style={{ color: '#ffffff', fontFamily: 'monospace', fontSize: 13, letterSpacing: 2 }}>
+            LOADING MODELS...
+          </p>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
       </div>
     );
   }
 
   return (
-    <main className="min-h-screen p-4 md:p-8 bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
-      <div className="max-w-[1800px] mx-auto">
-        {/* Header */}
-      <div className="mb-8 text-center">
-        <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-3">
-          LiteDoc Visualization
-        </h1>
-        <p className="text-slate-600 dark:text-slate-400 text-lg">
-          Interactive MoE Expert Pruning & Token Routing
-        </p>
-        <p className="text-sm text-slate-500 dark:text-slate-500 mt-2">
-          3D Architecture Visualization with Real-time Inference Flow
-        </p>
-        
-        {/* Add this button */}
-        <div className="mt-6">
-          <Link href="/chat">
-            <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 py-3 text-lg">
-              <MessageSquare className="w-5 h-5 mr-2" />
-              Chat with LiteDoc
-            </Button>
+    <div style={{ minHeight: '100vh', background: '#030712', position: 'relative' }}>
+      <GridBackground />
+
+      <div style={{ position: 'relative', zIndex: 1, maxWidth: 1600, margin: '0 auto', padding: '0 24px 60px' }}>
+
+        {/* ── Header ── */}
+        <header style={{ paddingTop: 40, paddingBottom: 32, textAlign: 'center' }}>
+          {/* Badge */}
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)',
+            borderRadius: 100, padding: '5px 14px', marginBottom: 20,
+          }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#22d3ee', boxShadow: '0 0 6px #22d3ee' }} />
+            <span style={{ color: '#38bdf8', fontSize: 11, fontFamily: 'monospace', letterSpacing: 2 }}>
+              ICDAR 2026 · SUBMISSION
+            </span>
+          </div>
+
+          {/* Title */}
+          <h1 style={{
+            fontSize: 'clamp(32px, 6vw, 64px)',
+            fontWeight: 800,
+            fontFamily: '"Courier New", monospace',
+            letterSpacing: -2,
+            margin: '0 0 10px',
+            background: 'linear-gradient(135deg, #f1f5f9 0%, #38bdf8 40%, #a78bfa 70%, #f472b6 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+            lineHeight: 1.1,
+          }}>
+            LiteDoc
+          </h1>
+
+          <p style={{
+            color: '#ffffff', fontSize: 14, fontFamily: 'monospace',
+            letterSpacing: 3, marginBottom: 6,
+          }}>
+            DISTILLING LARGE DOCUMENT MODELS INTO EFFICIENT TASK-SPECIFIC ENCODERS
+          </p>
+
+          <p style={{ color: '#e2e8f0', fontSize: 12, fontFamily: 'monospace', letterSpacing: 1, marginBottom: 28 }}>
+            DeepSeek-VL2 · CKA Expert Pruning · Sparse-to-Sparse KD · MoE Architecture
+          </p>
+
+          {/* CTA */}
+          <Link href="/chat" style={{ textDecoration: 'none' }}>
+            <button style={{
+              background: 'linear-gradient(135deg, rgba(56,189,248,0.15), rgba(167,139,250,0.15))',
+              border: '1px solid rgba(56,189,248,0.35)',
+              color: '#e2e8f0', borderRadius: 10, padding: '12px 28px',
+              fontSize: 13, fontFamily: 'monospace', letterSpacing: 1,
+              cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8,
+              transition: 'all 0.2s',
+            }}>
+              <MessageSquare size={16} color="#38bdf8" />
+              CHAT WITH LITEDOC
+              <ChevronRight size={14} color="#ffffff" />
+            </button>
           </Link>
+        </header>
+
+        {/* ── Key Metrics Row ── */}
+        <div style={{
+          display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 32,
+          padding: '20px 24px',
+          background: 'rgba(5,10,25,0.6)', backdropFilter: 'blur(12px)',
+          border: '1px solid rgba(56,189,248,0.08)', borderRadius: 14,
+        }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ color: '#ffffff', fontSize: 10, fontFamily: 'monospace', letterSpacing: 2, marginBottom: 10 }}>
+              KEY RESULTS · 80% PRUNING
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <PerfBadge value="89.6%" label="Teacher Perf. Retained" accent="#22d3ee" />
+              <PerfBadge value="2.4×" label="Compression" accent="#a78bfa" />
+              <PerfBadge value="−39.8%" label="VRAM Reduction" accent="#f472b6" />
+              <PerfBadge value="+51.7%" label="Throughput Gain" accent="#34d399" />
+            </div>
+          </div>
+          <div style={{
+            width: 1, background: 'rgba(56,189,248,0.1)',
+            alignSelf: 'stretch', margin: '0 8px',
+          }} />
+          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4 }}>
+            <div style={{ color: '#ffffff', fontSize: 10, fontFamily: 'monospace', letterSpacing: 2, marginBottom: 6 }}>
+              BENCHMARKS (80% KD)
+            </div>
+            {[
+              { label: 'DocVQA', val: 82.13, max: 88.76 },
+              { label: 'FUNSD', val: 80.44, max: 87.59 },
+              { label: 'RVL-CDIP', val: 82.67, max: 91.15 },
+            ].map(({ label, val, max }) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ color: '#ffffff', fontSize: 10, fontFamily: 'monospace', width: 72 }}>{label}</span>
+                <div style={{ width: 140, height: 4, background: 'rgba(56,189,248,0.08)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${(val / max) * 100}%`, height: '100%',
+                    background: 'linear-gradient(to right, #38bdf8, #a78bfa)',
+                    borderRadius: 2,
+                  }} />
+                </div>
+                <span style={{ color: '#ffffff', fontSize: 10, fontFamily: 'monospace' }}>{val.toFixed(1)}</span>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
-        
 
-        <Tabs defaultValue="baseline" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 mb-6 bg-white dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700">
-            <TabsTrigger 
-              value="baseline"
-              className="data-[state=active]:bg-blue-600 data-[state=active]:text-white"
-            >
-              Baseline (0%)
-            </TabsTrigger>
-            <TabsTrigger 
-              value="pruned40"
-              className="data-[state=active]:bg-purple-600 data-[state=active]:text-white"
-            >
-              40% Pruned
-            </TabsTrigger>
-            <TabsTrigger 
-              value="pruned80"
-              className="data-[state=active]:bg-pink-600 data-[state=active]:text-white"
-            >
-              80% Pruned
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Baseline Tab */}
-          <TabsContent value="baseline" className="space-y-6">
-            <Card className="border-2 border-blue-200 dark:border-blue-800">
-              <CardHeader className="bg-gradient-to-r from-blue-50 to-white dark:from-blue-950 dark:to-slate-900">
-                <CardTitle className="text-blue-900 dark:text-blue-100">
-                  {baselineData?.name}
-                </CardTitle>
-                <CardDescription>
-                  Full model with 64 experts per layer • 3.37B parameters
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="pt-6 space-y-6">
-                {baselineData && (
-                  <>
-                    <ModelStats modelData={baselineData} />
-                    
-                    {/* Full Width 3D Visualization */}
-                    <div>
-                      <h3 className="text-lg font-semibold mb-4 text-slate-900 dark:text-white">
-                        3D Architecture & Token Routing
-                      </h3>
-                      <MoEArchitecture3D modelData={baselineData} />
-                    </div>
-
-                    {/* Full Width Chart */}
-                    <ExpertRetentionChart modelData={baselineData} />
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* 40% Pruned Tab */}
-          <TabsContent value="pruned40" className="space-y-6">
-            <Card className="border-2 border-purple-200 dark:border-purple-800">
-              <CardHeader className="bg-gradient-to-r from-purple-50 to-white dark:from-purple-950 dark:to-slate-900">
-                <CardTitle className="text-purple-900 dark:text-purple-100">
-                  {pruned40Data?.name}
-                </CardTitle>
-                <CardDescription>
-                  ~38 experts per layer • 2.4B parameters • 1.4× compression
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="pt-6 space-y-6">
-                {pruned40Data && (
-                  <>
-                    <ModelStats modelData={pruned40Data} />
-                    
-                    {/* Full Width 3D Visualization */}
-                    <div>
-                      <h3 className="text-lg font-semibold mb-4 text-slate-900 dark:text-white">
-                        3D Architecture & Token Routing
-                      </h3>
-                      <MoEArchitecture3D modelData={pruned40Data} />
-                    </div>
-
-                    {/* Full Width Chart */}
-                    <ExpertRetentionChart modelData={pruned40Data} />
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* 80% Pruned Tab */}
-          <TabsContent value="pruned80" className="space-y-6">
-            <Card className="border-2 border-pink-200 dark:border-pink-800">
-              <CardHeader className="bg-gradient-to-r from-pink-50 to-white dark:from-pink-950 dark:to-slate-900">
-                <CardTitle className="text-pink-900 dark:text-pink-100">
-                  {pruned80Data?.name}
-                </CardTitle>
-                <CardDescription>
-                  ~13 experts per layer • 1.4B parameters • 2.4× compression
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="pt-6 space-y-6">
-                {pruned80Data && (
-                  <>
-                    <ModelStats modelData={pruned80Data} />
-                    
-                    {/* Full Width 3D Visualization */}
-                    <div>
-                      <h3 className="text-lg font-semibold mb-4 text-slate-900 dark:text-white">
-                        3D Architecture & Token Routing
-                      </h3>
-                      <MoEArchitecture3D modelData={pruned80Data} />
-                    </div>
-
-                    {/* Full Width Chart */}
-                    <ExpertRetentionChart modelData={pruned80Data} />
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-
-        {/* Footer */}
-        <div className="mt-12 text-center text-sm text-slate-500 dark:text-slate-600">
-          <p>LiteDoc: Distilling Large Document Models into Efficient Task-Specific Encoders</p>
-          <p className="mt-1">ICDAR 2026 Submission</p>
+        {/* ── Tab Selector ── */}
+        <div style={{
+          display: 'flex', gap: 2, marginBottom: 24,
+          background: 'rgba(5,10,20,0.8)', backdropFilter: 'blur(12px)',
+          border: '1px solid rgba(56,189,248,0.08)', borderRadius: 12, padding: 4,
+        }}>
+          {MODEL_TABS.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                style={{
+                  flex: 1, padding: '12px 16px', borderRadius: 9,
+                  border: isActive ? `1px solid ${tab.accentBorder}` : '1px solid transparent',
+                  background: isActive ? tab.accentDim : 'transparent',
+                  cursor: 'pointer', transition: 'all 0.2s',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                }}
+              >
+                <span style={{
+                  color: isActive ? tab.accent : '#ffffff',
+                  fontSize: 12, fontFamily: 'monospace', fontWeight: 700, letterSpacing: 1,
+                }}>
+                  {tab.label}
+                </span>
+                <span style={{ color: isActive ? `${tab.accent}cc` : '#cbd5e1', fontSize: 10, fontFamily: 'monospace' }}>
+                  {tab.sublabel}
+                </span>
+              </button>
+            );
+          })}
         </div>
+
+        {/* ── Active tab content ── */}
+        {activeData && (() => {
+          const tab = activeTabConfig;
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+
+              {/* Description bar */}
+              <div style={{
+                background: 'rgba(5,10,20,0.7)', backdropFilter: 'blur(12px)',
+                border: `1px solid ${tab.accentBorder}`,
+                borderRadius: 12, padding: '14px 20px',
+                display: 'flex', alignItems: 'center', gap: 14,
+              }}>
+                <div style={{
+                  width: 8, height: 8, borderRadius: '50%',
+                  background: tab.accent, boxShadow: `0 0 8px ${tab.accent}`,
+                  flexShrink: 0,
+                }} />
+                <div>
+                  <div style={{ color: tab.accent, fontSize: 13, fontFamily: 'monospace', fontWeight: 700, marginBottom: 2 }}>
+                    {activeData.name}
+                  </div>
+                  <div style={{ color: '#e2e8f0', fontSize: 11, fontFamily: 'monospace' }}>
+                    {tab.description}
+                  </div>
+                </div>
+                {/* Mini stat pills */}
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                  {tab.stats.map(({ icon: Icon, value, label }) => (
+                    <div key={label} style={{
+                      background: `${tab.accent}0c`, border: `1px solid ${tab.accent}20`,
+                      borderRadius: 8, padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 6,
+                    }}>
+                      <Icon size={12} color={tab.accent} />
+                      <div>
+                        <div style={{ color: tab.accent, fontSize: 12, fontFamily: 'monospace', fontWeight: 700, lineHeight: 1 }}>{value}</div>
+                        <div style={{ color: '#ffffff', fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 1 }}>{label}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Model Stats */}
+              <div style={{
+                background: 'rgba(5,10,20,0.7)', backdropFilter: 'blur(12px)',
+                border: `1px solid rgba(56,189,248,0.08)`, borderRadius: 14, padding: 24,
+              }}>
+                <SectionHeading icon={BarChart3} label="Model Statistics" accent={tab.accent} />
+                <ModelStats modelData={activeData} />
+              </div>
+
+              {/* 3D Architecture */}
+              <div style={{
+                background: 'rgba(5,10,20,0.7)', backdropFilter: 'blur(12px)',
+                border: `1px solid rgba(56,189,248,0.08)`, borderRadius: 14, padding: 24,
+              }}>
+                <SectionHeading icon={Cpu} label="3D Architecture · Token Routing" accent={tab.accent} />
+                <div style={{ color: '#e2e8f0', fontSize: 11, fontFamily: 'monospace', marginBottom: 14 }}>
+                  Hover a layer to inspect its CKA similarity matrix · Run inference to see token flow
+                </div>
+                <MoEArchitecture3D modelData={activeData} />
+              </div>
+
+              {/* Expert Retention Chart */}
+              {/* <div style={{
+                background: 'rgba(5,10,20,0.7)', backdropFilter: 'blur(12px)',
+                border: `1px solid rgba(56,189,248,0.08)`, borderRadius: 14, padding: 24,
+              }}>
+                <SectionHeading icon={Activity} label="Expert Retention per Layer" accent={tab.accent} />
+                <ExpertRetentionChart modelData={activeData} />
+              </div> */}
+
+            </div>
+          );
+        })()}
+
+        {/* ── Footer ── */}
+        <footer style={{ marginTop: 60, textAlign: 'center', borderTop: '1px solid rgba(56,189,248,0.06)', paddingTop: 32 }}>
+          <div style={{ color: '#e2e8f0', fontSize: 12, fontFamily: 'monospace', letterSpacing: 1 }}>
+            LiteDoc: Distilling Large Document Models into Efficient Task-Specific Encoders
+          </div>
+          <div style={{ color: '#94a3b8', fontSize: 11, fontFamily: 'monospace', marginTop: 4 }}>
+            ICDAR 2026 · DeepSeek-VL2 · CKA Expert Pruning · S2S Knowledge Distillation
+          </div>
+        </footer>
       </div>
-    </main>
+    </div>
   );
 }
