@@ -495,12 +495,14 @@ export default function MoEArchitecture3D({ modelData }: MoEArchitecture3DProps)
   // currentTokenLayer is a renderIndex. Starts at totalLayers-1 (top=L0) and decrements to 0 (bottom=L10)
   const [currentTokenLayer, setCurrentTokenLayer] = useState(-1);
   const [arrivedLayers, setArrivedLayers] = useState<Set<number>>(new Set());
-  const [isFullscreen, setIsFullscreen] = useState(false);
+    const [isFullscreen, setIsFullscreen] = useState(false);
   const [showConnections, setShowConnections] = useState(true);
   const [hoveredLayer, setHoveredLayer] = useState<number | null>(null);
   const [ckaAnchor, setCkaAnchor] = useState<{ x: number; y: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Force re-render counter to fix canvas resize after fullscreen exit
+  const [resizeTick, setResizeTick] = useState(0);
 
   const totalLayers = modelData.layers.length;
   // avgExperts: 64 for baseline, lower for pruned models
@@ -518,7 +520,15 @@ export default function MoEArchitecture3D({ modelData }: MoEArchitecture3DProps)
   }, []);
 
   useEffect(() => {
-    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    const onChange = () => {
+      const fs = !!document.fullscreenElement;
+      setIsFullscreen(fs);
+      // When exiting fullscreen, force a re-render after a short delay so the
+      // canvas re-measures its container and the UI buttons re-appear.
+      if (!fs) {
+        setTimeout(() => setResizeTick(t => t + 1), 150);
+      }
+    };
     document.addEventListener('fullscreenchange', onChange);
     return () => document.removeEventListener('fullscreenchange', onChange);
   }, []);
@@ -619,8 +629,9 @@ export default function MoEArchitecture3D({ modelData }: MoEArchitecture3DProps)
   const currentLogicalLabel = currentTokenLayer >= 0 ? (totalLayers - 1) - currentTokenLayer : -1;
 
   // ── Canvas ───────────────────────────────────────────────────────────────────
-  const canvasContent = (
+   const canvasContent = (
     <Canvas
+      key={resizeTick} // Force remount on fullscreen exit to recalculate size
       gl={{ antialias: true, powerPreference: 'high-performance' }}
       dpr={[1, 2]}
       style={{ background: 'transparent' }}
@@ -659,7 +670,7 @@ export default function MoEArchitecture3D({ modelData }: MoEArchitecture3DProps)
         dampingFactor={0.06}
         autoRotate={autoRotate}
         autoRotateSpeed={0.4}
-        maxDistance={50}
+        maxDistance={37}
         minDistance={5}
         enablePan
         zoomToCursor={false}
@@ -680,16 +691,18 @@ export default function MoEArchitecture3D({ modelData }: MoEArchitecture3DProps)
   };
 
   return (
-    <div
+        <div
       ref={containerRef}
       style={{
         width: '100%',
-        height: isFullscreen ? '100vh' : 640,
+        height: isFullscreen ? '100vh' : '100%',
+        minHeight: isFullscreen ? '100vh' : 640,
         background: 'radial-gradient(ellipse at 30% 40%, rgba(14,30,60,0.9) 0%, rgba(3,7,18,1) 100%)',
         borderRadius: isFullscreen ? 0 : 16,
         border: isFullscreen ? 'none' : '1px solid rgba(56,189,248,0.12)',
         overflow: 'hidden',
         position: 'relative',
+        flex: 1,
       }}
     >
       {/* Controls */}

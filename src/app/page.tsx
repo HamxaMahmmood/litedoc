@@ -1,10 +1,9 @@
 'use client';
 import Link from 'next/link';
 import { MessageSquare, Zap, Cpu, BarChart3, GitBranch, ChevronRight, Activity } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import MoEArchitecture3D from '@/components/visualizations/MoEArchitecture3D';
 import ModelStats from '@/components/visualizations/ModelStats';
-import ExpertRetentionChart from '@/components/visualizations/ExpertRetentionChart';
 import { ModelConfig } from '@/types/model';
 import { Loader2 } from 'lucide-react';
 
@@ -14,12 +13,10 @@ function GridBackground() {
     <div style={{
       position: 'fixed', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none',
     }}>
-      {/* Deep space gradient */}
       <div style={{
         position: 'absolute', inset: 0,
         background: 'radial-gradient(ellipse 80% 60% at 20% 10%, rgba(15,30,80,0.6) 0%, transparent 60%), radial-gradient(ellipse 60% 50% at 80% 80%, rgba(50,10,80,0.4) 0%, transparent 60%), #030712',
       }} />
-      {/* Grid lines */}
       <svg width="100%" height="100%" style={{ position: 'absolute', inset: 0, opacity: 0.06 }}>
         <defs>
           <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
@@ -28,7 +25,6 @@ function GridBackground() {
         </defs>
         <rect width="100%" height="100%" fill="url(#grid)" />
       </svg>
-      {/* Scanline overlay */}
       <div style={{
         position: 'absolute', inset: 0,
         background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px)',
@@ -153,6 +149,333 @@ function PerfBadge({ value, label, accent }: { value: string; label: string; acc
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  NEW: Architecture Chapter Data & Visualisations
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ARCHITECTURE_CHAPTERS = [
+  {
+    id: 'tiling',
+    label: 'Dynamic Tiling',
+    sub: 'SigLIP 384²',
+    color: '#38bdf8',
+    description:
+      'High-resolution images are dynamically split into local tiles using a SigLIP-SO400M-384 encoder. Candidate resolutions minimise padding for arbitrary aspect ratios.',
+    details: [
+      'Candidate set: (m·384, n·384) where mn ≤ 9',
+      'Global thumbnail + m×n local tiles processed independently',
+      'Each tile yields 27×27 = 729 visual embeddings',
+      'Selected resolution minimises padded area',
+    ],
+  },
+  {
+    id: 'adapter',
+    label: 'VL Adapter',
+    sub: '2-Layer MLP',
+    color: '#a78bfa',
+    description:
+      'A 2-layer MLP projector with 2×2 pixel shuffle compresses visual tokens and injects special separator tokens before feeding into the language model.',
+    details: [
+      'Pixel shuffle: 27×27 → 14×14 tokens per tile',
+      'Special tokens: <tile_newline> and <view_separator>',
+      'Projects visual features into LLM embedding space',
+      'Total visual tokens: 210 + 1 + m·14×(n·14+1)',
+    ],
+  },
+  {
+    id: 'moe',
+    label: 'DeepSeekMoE',
+    sub: '64 Experts',
+    color: '#f472b6',
+    description:
+      'Mixture-of-Experts decoder with Multi-head Latent Attention. 64 routed + 2 shared experts per layer with top-6 routing and auxiliary-loss-free load balancing.',
+    details: [
+      'Multi-head Latent Attention (MLA) compresses KV cache',
+      '64 routed experts, 2 shared experts, top-6 selection',
+      'Sparse computation across 11 transformer blocks',
+      'Distilled student retains ~89.6 % teacher performance',
+    ],
+  },
+];
+
+function ArchitectureMiniMap({ activeId, onSelect }: { activeId: string; onSelect: (id: string) => void }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {ARCHITECTURE_CHAPTERS.map((layer, idx) => (
+        <button
+          key={layer.id}
+          onClick={() => onSelect(layer.id)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            width: '100%', padding: '10px 12px', borderRadius: 8,
+            border: `1px solid ${activeId === layer.id ? layer.color + '40' : 'transparent'}`,
+            background: activeId === layer.id ? layer.color + '12' : 'transparent',
+            cursor: 'pointer', transition: 'all 0.2s', textAlign: 'left',
+          }}
+        >
+          <div style={{
+            width: 28, height: 28, borderRadius: 6,
+            background: activeId === layer.id ? layer.color + '25' : 'rgba(255,255,255,0.05)',
+            border: `1px solid ${activeId === layer.id ? layer.color + '50' : 'rgba(255,255,255,0.1)'}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: activeId === layer.id ? layer.color : '#64748b',
+            fontSize: 10, fontFamily: 'monospace', fontWeight: 700,
+          }}>
+            {idx + 1}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              color: activeId === layer.id ? '#fff' : '#cbd5e1',
+              fontSize: 12, fontFamily: 'monospace', fontWeight: 600,
+            }}>
+              {layer.label}
+            </div>
+            <div style={{
+              color: activeId === layer.id ? layer.color : '#64748b',
+              fontSize: 9, fontFamily: 'monospace', marginTop: 1,
+            }}>
+              {layer.sub}
+            </div>
+          </div>
+          {activeId === layer.id && (
+            <div style={{ width: 3, height: 20, borderRadius: 2, background: layer.color, flexShrink: 0 }} />
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DynamicTilingStage() {
+  return (
+    <div style={{
+      width: '100%', height: '100%', position: 'relative',
+      background: 'radial-gradient(ellipse at 30% 40%, rgba(14,30,60,0.9) 0%, rgba(3,7,18,1) 100%)',
+      overflow: 'hidden',
+    }}>
+      {/* faint grid */}
+      <div style={{
+        position: 'absolute', inset: 0, opacity: 0.05,
+        backgroundImage: 'linear-gradient(#38bdf8 1px, transparent 1px), linear-gradient(90deg, #38bdf8 1px, transparent 1px)',
+        backgroundSize: '40px 40px',
+      }} />
+
+      {/* header */}
+      <div style={{ position: 'absolute', top: 24, left: 24, zIndex: 10, pointerEvents: 'none' }}>
+        <div style={{ color: '#38bdf8', fontSize: 10, fontFamily: 'monospace', letterSpacing: 2 }}>COMPONENT</div>
+        <div style={{ color: '#fff', fontSize: 20, fontFamily: 'monospace', fontWeight: 700, marginTop: 4 }}>Dynamic Tiling</div>
+      </div>
+
+      {/* Input image mock */}
+      <div style={{
+        position: 'absolute', top: '50%', left: '34%', transform: 'translate(-50%, -50%)',
+        width: 260, height: 180, borderRadius: 8,
+        background: 'linear-gradient(135deg, #1e3a5f, #0f172a)',
+        border: '1px solid rgba(56,189,248,0.3)',
+        boxShadow: '0 0 40px rgba(56,189,248,0.1)',
+        overflow: 'hidden',
+      }}>
+        <div style={{ padding: 16, opacity: 0.5 }}>
+          <div style={{ width: '55%', height: 6, background: '#38bdf8', borderRadius: 3, marginBottom: 6 }} />
+          <div style={{ width: '35%', height: 6, background: '#38bdf8', borderRadius: 3, marginBottom: 12 }} />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ width: 50, height: 50, background: 'rgba(56,189,248,0.2)', borderRadius: 4 }} />
+            <div style={{ width: 50, height: 50, background: 'rgba(56,189,248,0.2)', borderRadius: 4 }} />
+            <div style={{ width: 50, height: 50, background: 'rgba(56,189,248,0.2)', borderRadius: 4 }} />
+          </div>
+        </div>
+        {/* tile grid overlay */}
+        <div style={{
+          position: 'absolute', inset: 0,
+          display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gridTemplateRows: '1fr 1fr',
+        }}>
+          {[...Array(6)].map((_, i) => (
+            <div key={i} style={{
+              border: '1px solid rgba(56,189,248,0.35)',
+              background: 'rgba(56,189,248,0.06)',
+            }} />
+          ))}
+        </div>
+        <div style={{
+          position: 'absolute', bottom: -22, left: '50%', transform: 'translateX(-50%)',
+          color: '#38bdf8', fontSize: 10, fontFamily: 'monospace', whiteSpace: 'nowrap',
+        }}>
+          Input Image (2×3 tiles)
+        </div>
+      </div>
+
+      {/* arrow */}
+      <div style={{
+        position: 'absolute', top: '50%', left: '52%', transform: 'translateY(-50%)',
+        color: '#38bdf8', fontSize: 22, fontFamily: 'monospace', opacity: 0.8,
+      }}>
+        →
+      </div>
+
+      {/* Output tiles */}
+      <div style={{
+        position: 'absolute', top: '50%', right: 50, transform: 'translateY(-50%)',
+        display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center',
+      }}>
+        {/* global thumbnail */}
+        <div style={{
+          width: 110, height: 80, borderRadius: 6,
+          background: 'linear-gradient(135deg, #f59e0b15, #f59e0b05)',
+          border: '1px solid rgba(245,158,11,0.4)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 0 20px rgba(245,158,11,0.08)',
+        }}>
+          <span style={{ color: '#fbbf24', fontSize: 10, fontFamily: 'monospace' }}>Global Thumb</span>
+        </div>
+
+        {/* local tile grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
+          {[...Array(6)].map((_, i) => (
+            <div key={i} style={{
+              width: 34, height: 34, borderRadius: 4,
+              background: 'rgba(56,189,248,0.12)',
+              border: '1px solid rgba(56,189,248,0.3)',
+            }} />
+          ))}
+        </div>
+        <div style={{ color: '#38bdf8', fontSize: 10, fontFamily: 'monospace' }}>Local Tiles</div>
+      </div>
+
+      {/* resolution badge */}
+      <div style={{
+        position: 'absolute', bottom: 36, left: 36,
+        background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)',
+        borderRadius: 8, padding: '10px 14px',
+      }}>
+        <div style={{ color: '#38bdf8', fontSize: 9, fontFamily: 'monospace', marginBottom: 2, letterSpacing: 1 }}>
+          SELECTED RESOLUTION
+        </div>
+        <div style={{ color: '#fff', fontSize: 15, fontFamily: 'monospace', fontWeight: 700 }}>
+          768 × 1152
+        </div>
+        <div style={{ color: '#94a3b8', fontSize: 9, fontFamily: 'monospace', marginTop: 2 }}>
+          m=2, n=3, mn=6 ≤ 9
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function VLAdapterStage() {
+  return (
+    <div style={{
+      width: '100%', height: '100%', position: 'relative',
+      background: 'radial-gradient(ellipse at 30% 40%, rgba(14,30,60,0.9) 0%, rgba(3,7,18,1) 100%)',
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        position: 'absolute', inset: 0, opacity: 0.05,
+        backgroundImage: 'linear-gradient(#a78bfa 1px, transparent 1px), linear-gradient(90deg, #a78bfa 1px, transparent 1px)',
+        backgroundSize: '40px 40px',
+      }} />
+
+      <div style={{ position: 'absolute', top: 24, left: 24, zIndex: 10, pointerEvents: 'none' }}>
+        <div style={{ color: '#a78bfa', fontSize: 10, fontFamily: 'monospace', letterSpacing: 2 }}>COMPONENT</div>
+        <div style={{ color: '#fff', fontSize: 20, fontFamily: 'monospace', fontWeight: 700, marginTop: 4 }}>VL Adapter</div>
+      </div>
+
+      {/* Input tokens */}
+      <div style={{
+        position: 'absolute', top: '50%', left: 50, transform: 'translateY(-50%)',
+        display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center',
+      }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 3 }}>
+          {[...Array(14)].map((_, i) => (
+            <div key={i} style={{
+              width: 14, height: 14, borderRadius: 2,
+              background: 'rgba(167,139,250,0.25)',
+              border: '1px solid rgba(167,139,250,0.45)',
+            }} />
+          ))}
+        </div>
+        <div style={{ color: '#a78bfa', fontSize: 10, fontFamily: 'monospace' }}>14 × 14 tokens</div>
+      </div>
+
+      {/* arrow */}
+      <div style={{
+        position: 'absolute', top: '50%', left: '38%', transform: 'translateY(-50%)',
+        color: '#a78bfa', fontSize: 22, opacity: 0.8,
+      }}>
+        →
+      </div>
+
+      {/* MLP block */}
+      <div style={{
+        position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+        width: 130, height: 100, display: 'flex', flexDirection: 'column', gap: 8,
+      }}>
+        <div style={{
+          flex: 1, borderRadius: 8,
+          background: 'rgba(167,139,250,0.08)',
+          border: '1px solid rgba(167,139,250,0.3)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: '#a78bfa', fontSize: 10, fontFamily: 'monospace',
+        }}>
+          Linear + GELU
+        </div>
+        <div style={{
+          flex: 1, borderRadius: 8,
+          background: 'rgba(167,139,250,0.08)',
+          border: '1px solid rgba(167,139,250,0.3)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: '#a78bfa', fontSize: 10, fontFamily: 'monospace',
+        }}>
+          Linear Proj
+        </div>
+        <div style={{ color: '#a78bfa', fontSize: 10, fontFamily: 'monospace', textAlign: 'center' }}>
+          2-Layer MLP
+        </div>
+      </div>
+
+      {/* arrow */}
+      <div style={{
+        position: 'absolute', top: '50%', right: '30%', transform: 'translateY(-50%)',
+        color: '#a78bfa', fontSize: 22, opacity: 0.8,
+      }}>
+        →
+      </div>
+
+      {/* Output sequence */}
+      <div style={{
+        position: 'absolute', top: '50%', right: 50, transform: 'translateY(-50%)',
+        display: 'flex', flexDirection: 'column', gap: 5, width: 170,
+      }}>
+        <div style={{
+          background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)',
+          borderRadius: 4, padding: '4px 8px', color: '#fbbf24',
+          fontSize: 10, fontFamily: 'monospace',
+        }}>
+          &lt;view_separator&gt;
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 3 }}>
+          {[...Array(15)].map((_, i) => (
+            <div key={i} style={{
+              width: '100%', height: 18, borderRadius: 2,
+              background: 'rgba(167,139,250,0.18)',
+              border: '1px solid rgba(167,139,250,0.3)',
+            }} />
+          ))}
+        </div>
+        <div style={{
+          background: 'rgba(56,189,248,0.12)', border: '1px solid rgba(56,189,248,0.35)',
+          borderRadius: 4, padding: '4px 8px', color: '#38bdf8',
+          fontSize: 10, fontFamily: 'monospace',
+        }}>
+          &lt;tile_newline&gt;
+        </div>
+        <div style={{ color: '#a78bfa', fontSize: 10, fontFamily: 'monospace', textAlign: 'center', marginTop: 4 }}>
+          LM Embedding Space
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function Home() {
   const [baselineData, setBaselineData] = useState<ModelConfig | null>(null);
@@ -160,6 +483,7 @@ export default function Home() {
   const [pruned80Data, setPruned80Data] = useState<ModelConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'baseline' | 'pruned40' | 'pruned80'>('baseline');
+  const [activeChapter, setActiveChapter] = useState('moe');
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -182,6 +506,11 @@ export default function Home() {
     }
     loadData();
   }, []);
+
+  // Reset chapter to MoE when switching model tabs
+  useEffect(() => {
+    setActiveChapter('moe');
+  }, [activeTab]);
 
   const dataMap = { baseline: baselineData, pruned40: pruned40Data, pruned80: pruned80Data };
   const activeTabConfig = MODEL_TABS.find(t => t.id === activeTab)!;
@@ -218,7 +547,6 @@ export default function Home() {
 
         {/* ── Header ── */}
         <header style={{ paddingTop: 40, paddingBottom: 32, textAlign: 'center' }}>
-          {/* Badge */}
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
             background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)',
@@ -230,7 +558,6 @@ export default function Home() {
             </span>
           </div>
 
-          {/* Title */}
           <h1 style={{
             fontSize: 'clamp(32px, 6vw, 64px)',
             fontWeight: 800,
@@ -257,7 +584,6 @@ export default function Home() {
             DeepSeek-VL2 · CKA Expert Pruning · Sparse-to-Sparse KD · MoE Architecture
           </p>
 
-          {/* CTA */}
           <Link href="/chat" style={{ textDecoration: 'none' }}>
             <button style={{
               background: 'linear-gradient(135deg, rgba(56,189,248,0.15), rgba(167,139,250,0.15))',
@@ -357,6 +683,7 @@ export default function Home() {
         {/* ── Active tab content ── */}
         {activeData && (() => {
           const tab = activeTabConfig;
+          const chapter = ARCHITECTURE_CHAPTERS.find(c => c.id === activeChapter)!;
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
 
@@ -380,7 +707,6 @@ export default function Home() {
                     {tab.description}
                   </div>
                 </div>
-                {/* Mini stat pills */}
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
                   {tab.stats.map(({ icon: Icon, value, label }) => (
                     <div key={label} style={{
@@ -406,26 +732,109 @@ export default function Home() {
                 <ModelStats modelData={activeData} />
               </div>
 
-              {/* 3D Architecture */}
-              <div style={{
+              {/* ═══════════════════════════════════════════════════════════════
+                  NEW: Interactive Architecture Chapter Viewer
+                  ═══════════════════════════════════════════════════════════════ */}
+                            <div style={{
                 background: 'rgba(5,10,20,0.7)', backdropFilter: 'blur(12px)',
-                border: `1px solid rgba(56,189,248,0.08)`, borderRadius: 14, padding: 24,
+                border: `1px solid rgba(56,189,248,0.08)`, borderRadius: 14, overflow: 'hidden',
+                display: 'flex',
+                // CRITICAL FIX: give the flex container a definite height so the
+                // right-hand stage (and therefore the 3D canvas) knows how tall
+                // it should be when NOT in fullscreen.
+                height: 660,
               }}>
-                <SectionHeading icon={Cpu} label="3D Architecture · Token Routing" accent={tab.accent} />
-                <div style={{ color: '#e2e8f0', fontSize: 11, fontFamily: 'monospace', marginBottom: 14 }}>
-                  Hover a layer to inspect its CKA similarity matrix · Run inference to see token flow
-                </div>
-                <MoEArchitecture3D modelData={activeData} />
-              </div>
+                {/* ── Left Sidebar ── */}
+                <div style={{
+                  width: 300, background: 'rgba(5,10,20,0.95)',
+                  borderRight: '1px solid rgba(56,189,248,0.08)',
+                  display: 'flex', flexDirection: 'column',
+                }}>
+                  {/* Sidebar header */}
+                  <div style={{ padding: '20px 20px 8px' }}>
+                    <div style={{
+                      color: '#38bdf8', fontSize: 10, fontFamily: 'monospace', letterSpacing: 2, marginBottom: 10,
+                    }}>
+                      TABLE OF CONTENTS
+                    </div>
+                    <ArchitectureMiniMap activeId={activeChapter} onSelect={setActiveChapter} />
+                  </div>
 
-              {/* Expert Retention Chart */}
-              {/* <div style={{
-                background: 'rgba(5,10,20,0.7)', backdropFilter: 'blur(12px)',
-                border: `1px solid rgba(56,189,248,0.08)`, borderRadius: 14, padding: 24,
-              }}>
-                <SectionHeading icon={Activity} label="Expert Retention per Layer" accent={tab.accent} />
-                <ExpertRetentionChart modelData={activeData} />
-              </div> */}
+                  <div style={{ height: 1, background: 'rgba(56,189,248,0.08)', margin: '12px 20px' }} />
+
+                  {/* Chapter info */}
+                  <div style={{
+                    flex: 1, padding: '12px 20px 16px',
+                    display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto',
+                  }}>
+                    <div style={{ color: '#fff', fontSize: 15, fontFamily: 'monospace', fontWeight: 700 }}>
+                      {chapter.label}
+                    </div>
+                    <div style={{ color: '#e2e8f0', fontSize: 11, fontFamily: 'monospace', lineHeight: 1.6 }}>
+                      {chapter.description}
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                      {chapter.details.map((detail, i) => (
+                        <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                          <div style={{
+                            width: 4, height: 4, borderRadius: '50%',
+                            background: chapter.color, marginTop: 6, flexShrink: 0,
+                          }} />
+                          <span style={{ color: '#cbd5e1', fontSize: 11, fontFamily: 'monospace', lineHeight: 1.5 }}>
+                            {detail}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Bottom hint */}
+                  <div style={{
+                    padding: '12px 20px', borderTop: '1px solid rgba(56,189,248,0.08)',
+                    background: 'rgba(5,10,20,0.6)',
+                  }}>
+                    <div style={{ color: '#94a3b8', fontSize: 10, fontFamily: 'monospace', lineHeight: 1.4 }}>
+                      Select a component above to inspect its role in the DeepSeek-VL2 pipeline.
+                    </div>
+                  </div>
+                </div>
+
+                               {/* ── Right Stage ── */}
+                <div style={{
+                  flex: 1,
+                  position: 'relative',
+                  // CRITICAL FIX: the stage must itself be a flex column so that
+                  // the MoE wrapper can fill it with height:100%.
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                }}>
+                  {activeChapter === 'tiling' && <DynamicTilingStage />}
+                  {activeChapter === 'adapter' && <VLAdapterStage />}
+                                    {activeChapter === 'moe' && (
+                    <div style={{
+                      width: '100%',
+                      height: '100%',
+                      position: 'relative',
+                      display: 'flex',
+                      flexDirection: 'column',
+                    }}>
+                      {/* MoE label overlay */}
+                      <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 10, pointerEvents: 'none' }}>
+                        <div style={{ color: '#f472b6', fontSize: 10, fontFamily: 'monospace', letterSpacing: 2 }}>
+                          COMPONENT
+                        </div>
+                        <div style={{ color: '#fff', fontSize: 20, fontFamily: 'monospace', fontWeight: 700, marginTop: 4 }}>
+                          DeepSeekMoE
+                        </div>
+                      </div>
+                      {/* YOUR EXISTING 3D COMPONENT — UNCHANGED */}
+                      <MoEArchitecture3D modelData={activeData} />
+                    </div>
+                  )}
+                </div>
+              </div>
 
             </div>
           );
