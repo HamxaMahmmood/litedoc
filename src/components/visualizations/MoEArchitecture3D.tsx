@@ -21,81 +21,94 @@ function CKAGraph({ layerIndex, expertCount, onClose }: {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const N = 64;
     const size = 260;
     canvas.width = size;
     canvas.height = size;
+    const cell = size / N;
 
     const seed = layerIndex * 137 + 42;
     const rand = (i: number, j: number) => {
       const s = seed + i * 71 + j * 31;
-      return (Math.sin(s) * 43758.5453) % 1;
+      return Math.abs((Math.sin(s) * 43758.5453) % 1);
     };
 
-    const n = Math.min(expertCount, 32);
-    const cellSize = size / n;
     const numClusters = Math.max(2, 8 - Math.floor(layerIndex * 0.6));
-    const clusterOf = Array.from({ length: n }, (_, i) =>
-      Math.floor(Math.abs(rand(i, 0)) * numClusters)
+    const clusterOf = Array.from({ length: N }, (_, i) =>
+      Math.floor(rand(i, 0) * numClusters)
     );
 
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        let val: number;
+    // Build symmetric matrix — compute upper triangle, mirror to lower
+    const vals: number[][] = Array.from({ length: N }, () => new Array(N).fill(0));
+    for (let i = 0; i < N; i++) {
+      vals[i][i] = 1.0;
+      for (let j = i + 1; j < N; j++) {
+        const v = clusterOf[i] === clusterOf[j]
+          ? 0.65 + rand(i, j) * 0.3
+          : 0.20 + rand(i, j) * 0.35;
+        vals[i][j] = v;
+        vals[j][i] = v; // symmetric
+      }
+    }
+
+    // Draw full 64×64 viridis matrix — identical for all models
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        const t = vals[i][j];
         if (i === j) {
-          val = 1.0;
-        } else if (clusterOf[i] === clusterOf[j]) {
-          val = 0.65 + Math.abs(rand(i, j)) * 0.3;
+          ctx.fillStyle = `rgb(253,231,37)`;
         } else {
-          val = 0.2 + Math.abs(rand(i, j)) * 0.35;
+          let r: number, g: number, b: number;
+          if (t < 0.33) {
+            const f = t / 0.33;
+            r = Math.floor(68 * (1 - f));
+            g = Math.floor(1 * (1 - f) + 128 * f);
+            b = Math.floor(84 * (1 - f) + 128 * f);
+          } else if (t < 0.66) {
+            const f = (t - 0.33) / 0.33;
+            r = Math.floor(50 * f);
+            g = Math.floor(128 * (1 - f) + 200 * f);
+            b = Math.floor(128 * (1 - f) + 80 * f);
+          } else {
+            const f = (t - 0.66) / 0.34;
+            r = Math.floor(50 * (1 - f) + 253 * f);
+            g = Math.floor(200 * (1 - f) + 231 * f);
+            b = Math.floor(80 * (1 - f) + 37 * f);
+          }
+          ctx.fillStyle = `rgb(${r!},${g!},${b!})`;
         }
+        ctx.fillRect(j * cell, i * cell, cell, cell);
+      }
+    }
 
-        const t = val;
-        let r, g, b;
-        if (t < 0.33) {
-          const f = t / 0.33;
-          r = Math.floor(68 * (1 - f));
-          g = Math.floor(1 * (1 - f) + 128 * f);
-          b = Math.floor(84 * (1 - f) + 128 * f);
-        } else if (t < 0.66) {
-          const f = (t - 0.33) / 0.33;
-          r = Math.floor(50 * f);
-          g = Math.floor(128 * (1 - f) + 200 * f);
-          b = Math.floor(128 * (1 - f) + 80 * f);
-        } else {
-          const f = (t - 0.66) / 0.34;
-          r = Math.floor(50 * (1 - f) + 253 * f);
-          g = Math.floor(200 * (1 - f) + 231 * f);
-          b = Math.floor(80 * (1 - f) + 37 * f);
-        }
-
-        ctx.fillStyle = `rgb(${r},${g},${b})`;
-        ctx.fillRect(j * cellSize, i * cellSize, cellSize, cellSize);
-
-        if (i !== j && val > 0.7 && Math.abs(rand(i + 10, j + 10)) > 0.55) {
+    // Red X markers on high-similarity pairs
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        if (i !== j && vals[i][j] > 0.7 && rand(i + 10, j + 10) > 0.55) {
           ctx.strokeStyle = 'rgba(255,50,50,0.9)';
           ctx.lineWidth = 1.2;
-          const cx = j * cellSize + cellSize / 2;
-          const cy = i * cellSize + cellSize / 2;
-          const r2 = cellSize * 0.35;
+          const cx = j * cell + cell / 2;
+          const cy = i * cell + cell / 2;
+          const r2 = cell * 0.35;
           ctx.beginPath();
-          ctx.moveTo(cx - r2, cy - r2);
-          ctx.lineTo(cx + r2, cy + r2);
-          ctx.moveTo(cx + r2, cy - r2);
-          ctx.lineTo(cx - r2, cy + r2);
+          ctx.moveTo(cx - r2, cy - r2); ctx.lineTo(cx + r2, cy + r2);
+          ctx.moveTo(cx + r2, cy - r2); ctx.lineTo(cx - r2, cy + r2);
           ctx.stroke();
         }
       }
     }
 
-    for (let i = 0; i < n; i++) {
+    // Re-draw diagonal in yellow on top
+    for (let i = 0; i < N; i++) {
       ctx.fillStyle = 'rgb(253,231,37)';
-      ctx.fillRect(i * cellSize, i * cellSize, cellSize, cellSize);
+      ctx.fillRect(i * cell, i * cell, cell, cell);
     }
 
-    ctx.fillStyle = 'rgba(255,255,255,1.0)';
-    ctx.font = '9px monospace';
+    // Axis labels
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.font = 'bold 9px monospace';
     ctx.fillText('0', 2, 10);
-    ctx.fillText(`${n}`, size - 14, 10);
+    ctx.fillText('63', size - 18, 10);
   }, [layerIndex, expertCount]);
 
   return (
@@ -116,7 +129,10 @@ function CKAGraph({ layerIndex, expertCount, onClose }: {
             CKA Similarity Matrix
           </div>
           <div style={{ color: '#e2e8f0', fontSize: 10, fontFamily: 'monospace', marginTop: 2 }}>
-            Layer {layerIndex} · {expertCount} experts · τ = 0.70
+            Layer {layerIndex} · 64 × 64 experts · τ = 0.70
+          </div>
+          <div style={{ color: '#a3e635', fontSize: 10, fontFamily: 'monospace', marginTop: 2 }}>
+            Retained: {expertCount} / 64
           </div>
         </div>
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#e2e8f0', cursor: 'pointer', padding: 4 }}>
@@ -673,7 +689,7 @@ export default function MoEArchitecture3D({ modelData }: MoEArchitecture3DProps)
         maxDistance={37}
         minDistance={5}
         enablePan
-        zoomToCursor={false}
+        zoomToCursor={true}
         minPolarAngle={0}
         maxPolarAngle={Math.PI}
         target={[0, 0, 0]}
