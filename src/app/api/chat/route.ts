@@ -11,6 +11,11 @@ const HUGGINGFACE_INFERENCE_URL = process.env.HUGGINGFACE_INFERENCE_URL;
 interface HuggingFaceChatRequest {
   question: string;
   image?: string;
+  history?: {
+    role: 'user' | 'assistant';
+    content: string;
+    image?: string;
+  }[];
 }
 
 function normalizeHuggingFaceResponse(data: unknown): string {
@@ -71,6 +76,7 @@ export async function POST(req: Request) {
     const body: HuggingFaceChatRequest = await req.json();
     const question = body.question?.trim() ?? '';
     let image = body.image?.trim();
+    const history = Array.isArray(body.history) ? body.history : [];
 
     if (!question && !image) {
       return new Response(
@@ -92,6 +98,14 @@ export async function POST(req: Request) {
     if (image) {
       image = image.replace(/^data:image\/\w+;base64,/, '');
     }
+
+    const sanitizedHistory = history
+      .map(entry => ({
+        role: entry.role === 'assistant' ? 'assistant' : 'user',
+        content: (entry.content || '').trim(),
+        image: entry.image?.replace(/^data:image\/\w+;base64,/, ''),
+      }))
+      .filter(entry => entry.content || entry.image);
 
     const displayModelPath = HUGGINGFACE_MODEL.split('/')
       .map(encodeURIComponent)
@@ -115,30 +129,71 @@ export async function POST(req: Request) {
         headers.Authorization = `Bearer ${BACKEND_API_KEY}`;
       }
 
-      const parts: { text?: string; inline_data?: { mime_type: string; data: string } }[] = [];
-      if (image) {
-        parts.push({ inline_data: { mime_type: 'image/jpeg', data: image } });
-      }
-      parts.push({ text: question || 'Describe this document.' });
-
       payload = {
-        contents: [{ parts }],
+        contents:
+          sanitizedHistory.length > 0
+            ? sanitizedHistory.map(entry => {
+                const parts: {
+                  text?: string;
+                  inline_data?: { mime_type: string; data: string };
+                }[] = [];
+                if (entry.image) {
+                  parts.push({
+                    inline_data: { mime_type: 'image/jpeg', data: entry.image },
+                  });
+                }
+                if (entry.content) {
+                  parts.push({ text: entry.content });
+                }
+                return {
+                  role: entry.role === 'assistant' ? 'model' : 'user',
+                  parts,
+                };
+              })
+            : [
+                {
+                  role: 'user',
+                  parts: [
+                    ...(image
+                      ? [
+                          {
+                            inline_data: {
+                              mime_type: 'image/jpeg',
+                              data: image,
+                            },
+                          },
+                        ]
+                      : []),
+                    { text: question || 'Describe this document.' },
+                  ],
+                },
+              ],
         generationConfig: { temperature: 0.2, maxOutputTokens: 512 },
       };
     } else {
       endpoint = `${HUGGINGFACE_INFERENCE_URL || 'https://api-inference.huggingface.co'}/models/${displayModelPath}`;
       headers.Authorization = `Bearer ${HUGGINGFACE_API_KEY}`;
 
+      const hasContext = sanitizedHistory.length > 0;
+      const contextPrompt = hasContext
+        ? `${sanitizedHistory
+            .map(entry => `${entry.role === 'assistant' ? 'Assistant' : 'User'}: ${entry.content}`)
+            .join('\n')}\nAssistant:`
+        : question;
+
       payload = image
         ? {
             inputs: {
               image,
-              question: question || 'Describe this image.',
+              question:
+                contextPrompt && contextPrompt.trim().length > 0
+                  ? contextPrompt
+                  : 'Describe this image.',
             },
             options: { wait_for_model: true },
           }
         : {
-            inputs: question,
+            inputs: contextPrompt,
             options: { wait_for_model: true },
           };
     }

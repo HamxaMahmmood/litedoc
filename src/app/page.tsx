@@ -905,7 +905,7 @@ export default function Home() {
               {/* Model Stats */}
               <div style={{ background: 'rgba(5,10,20,0.7)', backdropFilter: 'blur(12px)', border: `1px solid rgba(56,189,248,0.08)`, borderRadius: 14, padding: 24 }}>
                 <SectionHeading icon={BarChart3} label="Model Statistics" accent={tab.accent} />
-                <ModelStats modelData={activeData} />
+                <ModelStats modelData={activeData} accent={tab.accent} />
               </div>
 
               {/* ── Interactive Architecture Viewer ── */}
